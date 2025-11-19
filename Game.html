@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Master Tic-Tac-Toe</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;900&display=swap');
+
+        :root {
+            --primary: #4f46e5;
+            --primary-dark: #4338ca;
+            --bg-color: #f8fafc;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            height: 100vh;
+            overflow: hidden;
+            margin: 0;
+            position: relative;
+        }
+
+        /* --- Background Canvas --- */
+        #bg-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0; 
+            cursor: crosshair;
+        }
+
+        /* --- Layout --- */
+        .app-container {
+            width: 100%;
+            max-width: 480px;
+            height: 100%;
+            margin: 0 auto;
+            /* More transparent background so snake is visible behind it */
+            background: rgba(255, 255, 255, 0.85); 
+            backdrop-filter: blur(8px);
+            position: relative;
+            z-index: 10; 
+            box-shadow: 0 0 40px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+        }
+
+        @media (min-width: 500px) {
+            .app-container {
+                height: 850px;
+                max-height: 95vh;
+                border-radius: 24px;
+                margin-top: 2vh;
+                border: 1px solid #e2e8f0;
+            }
+        }
+
+        /* --- Screens --- */
+        .screen {
+            flex: 1;
+            position: absolute;
+            inset: 0;
+            padding: 2rem;
+            background: transparent; 
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.4s ease;
+            transform: translateX(100%);
+            opacity: 0;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+        }
+
+        .screen.active {
+            transform: translateX(0);
+            opacity: 1;
+            pointer-events: auto;
+            z-index: 20;
+        }
+
+        /* --- Board --- */
+        .board-container {
+            width: 100%;
+            max-width: 340px;
+            margin: 0 auto;
+            aspect-ratio: 1 / 1; 
+        }
+
+        .board {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 8px;
+            width: 100%;
+            height: 100%;
+        }
+
+        .cell {
+            background-color: #f1f5f9;
+            border-radius: 12px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: clamp(2rem, 10vw, 3.5rem);
+            font-weight: 900;
+            cursor: pointer;
+            user-select: none;
+            transition: transform 0.1s, background-color 0.2s;
+            box-shadow: inset 0 -4px 0 rgba(0,0,0,0.05);
+        }
+
+        .cell:active { transform: scale(0.95); }
+        .cell.locked { cursor: default; opacity: 0.9; }
+        
+        .mark-x { color: #ef4444; filter: drop-shadow(0 2px 0 rgba(239,68,68,0.2)); }
+        .mark-o { color: #3b82f6; filter: drop-shadow(0 2px 0 rgba(59,130,246,0.2)); }
+
+        .cell.highlight-best { background-color: #dcfce7 !important; box-shadow: inset 0 0 0 3px #22c55e; }
+        .cell.highlight-mistake { background-color: #fee2e2 !important; box-shadow: inset 0 0 0 3px #ef4444; }
+
+        /* --- UI --- */
+        .btn {
+            width: 100%;
+            padding: 1rem;
+            border-radius: 16px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            transition: all 0.2s;
+        }
+        .btn:active { transform: scale(0.98); }
+
+        .btn-primary { 
+            background: var(--primary); 
+            color: white; 
+            box-shadow: 0 6px 0 var(--primary-dark); 
+            margin-bottom: 6px; 
+        }
+        .btn-primary:active { 
+            box-shadow: none; 
+            transform: translateY(6px); 
+            margin-bottom: 0;
+        }
+
+        .btn-outline { background: white; border: 2px solid #e2e8f0; color: #475569; }
+        
+        .qr-box {
+            background: white;
+            padding: 1rem;
+            border-radius: 16px;
+            border: 2px dashed #e2e8f0;
+            display: inline-block;
+        }
+
+        .loader { width: 24px; height: 24px; border: 3px solid #FFF; border-bottom-color: transparent; border-radius: 50%; animation: rotate 1s linear infinite; }
+        @keyframes rotate { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes popIn { 0% { transform: scale(0); opacity: 0; } 80% { transform: scale(1.1); } 100% { transform: scale(1); opacity: 1; } }
+    </style>
+    
+    <!-- Firebase -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- BACKGROUND ANIMATION (Smart Snake) ---
+        class BackgroundSnake {
+            constructor() {
+                this.canvas = document.getElementById('bg-canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.gridSize = 30;
+                this.cols = 0;
+                this.rows = 0;
+                
+                this.snake = [];
+                this.path = [];
+                this.apple = null;
+                this.target = null; // Can be apple or wander point
+                
+                this.tickSpeed = 60;
+                this.lastTick = 0;
+                
+                this.resize();
+                window.addEventListener('resize', () => this.resize());
+                
+                window.addEventListener('mousedown', (e) => {
+                    if(e.target.id === 'bg-canvas') {
+                        const gridX = Math.round(e.clientX / this.gridSize);
+                        const gridY = Math.round(e.clientY / this.gridSize);
+                        this.spawnApple(gridX, gridY);
+                    }
+                });
+
+                // Initial Snake
+                this.initSnake();
+                requestAnimationFrame((t) => this.loop(t));
+            }
+
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+                this.cols = Math.floor(this.canvas.width / this.gridSize);
+                this.rows = Math.floor(this.canvas.height / this.gridSize);
+            }
+
+            initSnake() {
+                // Safe spawn
+                const safeCols = Math.max(5, this.cols);
+                const safeRows = Math.max(5, this.rows);
+                const startX = Math.floor(safeCols / 2);
+                const startY = Math.floor(safeRows / 2);
+                this.snake = [{x: startX, y: startY}, {x: startX-1, y: startY}, {x: startX-2, y: startY}];
+            }
+
+            spawnApple(x, y) {
+                // Ensure apple is within bounds
+                x = Math.max(0, Math.min(x, this.cols - 1));
+                y = Math.max(0, Math.min(y, this.rows - 1));
+                
+                this.apple = {x, y};
+                // Apple overrides wandering
+                this.calculatePath(this.apple);
+            }
+
+            pickWanderTarget() {
+                const tx = Math.floor(Math.random() * (this.cols - 1));
+                const ty = Math.floor(Math.random() * (this.rows - 1));
+                return {x: tx, y: ty};
+            }
+
+            calculatePath(target) {
+                if (!target || this.snake.length === 0) return;
+                
+                const head = this.snake[0];
+                
+                // BFS for Shortest Path
+                let queue = [{x: head.x, y: head.y, parent: null}];
+                let visited = new Set();
+                visited.add(`${head.x},${head.y}`);
+                
+                let endNode = null;
+                let headPtr = 0; // Queue pointer optimization
+                
+                // Limit BFS depth for performance if grid is huge
+                const maxSteps = 2000; 
+                let steps = 0;
+
+                while(headPtr < queue.length && steps < maxSteps) {
+                    let current = queue[headPtr++];
+                    steps++;
+                    
+                    if (current.x === target.x && current.y === target.y) {
+                        endNode = current;
+                        break;
+                    }
+
+                    // Neighbors (Up, Down, Left, Right)
+                    const neighbors = [
+                        {x: current.x+1, y: current.y},
+                        {x: current.x-1, y: current.y},
+                        {x: current.x, y: current.y+1},
+                        {x: current.x, y: current.y-1}
+                    ];
+
+                    for (let n of neighbors) {
+                        if (n.x >= 0 && n.x < this.cols && n.y >= 0 && n.y < this.rows) {
+                            const key = `${n.x},${n.y}`;
+                            if (!visited.has(key)) {
+                                visited.add(key);
+                                queue.push({x: n.x, y: n.y, parent: current});
+                            }
+                        }
+                    }
+                }
+
+                // Reconstruct Path
+                this.path = [];
+                while(endNode && endNode.parent) {
+                    this.path.unshift({x: endNode.x, y: endNode.y});
+                    endNode = endNode.parent;
+                }
+            }
+
+            move() {
+                // If path empty, logic based on state
+                if (this.path.length === 0) {
+                    if (this.apple) {
+                        // Should have a path to apple, if stuck, recalc
+                        this.calculatePath(this.apple);
+                    } else {
+                        // WANDER: Pick new random target
+                        const wanderPt = this.pickWanderTarget();
+                        this.calculatePath(wanderPt);
+                    }
+                }
+
+                if (this.path.length > 0) {
+                    const next = this.path.shift();
+                    this.snake.unshift(next);
+                    
+                    // Check collisions
+                    if (this.apple && next.x === this.apple.x && next.y === this.apple.y) {
+                        this.apple = null; // Eat
+                        // Grow (don't pop)
+                    } else {
+                        this.snake.pop(); // Move
+                    }
+                }
+            }
+
+            draw() {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Grid Dots
+                this.ctx.fillStyle = '#cbd5e1';
+                for(let x = 0; x < this.cols; x++) {
+                    for(let y = 0; y < this.rows; y++) {
+                        this.ctx.beginPath();
+                        this.ctx.arc(x * this.gridSize, y * this.gridSize, 2, 0, Math.PI*2);
+                        this.ctx.fill();
+                    }
+                }
+
+                // Snake Path Preview (Subtle)
+                if(this.path.length > 0) {
+                    this.ctx.strokeStyle = 'rgba(99, 102, 241, 0.1)';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(this.snake[0].x * this.gridSize, this.snake[0].y * this.gridSize);
+                    for(let p of this.path) this.ctx.lineTo(p.x * this.gridSize, p.y * this.gridSize);
+                    this.ctx.stroke();
+                }
+
+                // Snake Body
+                if (this.snake.length > 0) {
+                    this.ctx.beginPath();
+                    this.ctx.lineWidth = 6;
+                    this.ctx.strokeStyle = '#4f46e5'; // Bright Indigo
+                    this.ctx.lineCap = 'round';
+                    this.ctx.lineJoin = 'round';
+                    this.ctx.shadowBlur = 12;
+                    this.ctx.shadowColor = '#818cf8';
+                    
+                    this.ctx.moveTo(this.snake[0].x * this.gridSize, this.snake[0].y * this.gridSize);
+                    for (let i = 1; i < this.snake.length; i++) {
+                        this.ctx.lineTo(this.snake[i].x * this.gridSize, this.snake[i].y * this.gridSize);
+                    }
+                    this.ctx.stroke();
+
+                    // Head
+                    this.ctx.beginPath();
+                    this.ctx.fillStyle = '#312e81'; // Darker Head
+                    this.ctx.arc(this.snake[0].x * this.gridSize, this.snake[0].y * this.gridSize, 6, 0, Math.PI*2);
+                    this.ctx.fill();
+                    this.ctx.shadowBlur = 0;
+                }
+
+                // Apple
+                if (this.apple) {
+                    this.ctx.fillStyle = '#ef4444';
+                    this.ctx.beginPath();
+                    this.ctx.arc(this.apple.x * this.gridSize, this.apple.y * this.gridSize, 7, 0, Math.PI*2);
+                    this.ctx.fill();
+                    
+                    // Pulse
+                    this.ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.beginPath();
+                    this.ctx.arc(this.apple.x * this.gridSize, this.apple.y * this.gridSize, 12 + Math.sin(Date.now()/150)*3, 0, Math.PI*2);
+                    this.ctx.stroke();
+                }
+            }
+
+            loop(timestamp) {
+                if (timestamp - this.lastTick > this.tickSpeed) {
+                    this.move();
+                    this.lastTick = timestamp;
+                }
+                this.draw();
+                requestAnimationFrame((t) => this.loop(t));
+            }
+        }
+
+
+        // --- APP LOGIC ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db, auth, userId;
+        let gameState = { board: Array(9).fill(null), currentPlayer: 'X', isActive: false, mode: 'standard', playerMark: 'X', mpId: null };
+        let mpUnsubscribe = null;
+
+        async function initApp() {
+            // Init Snake
+            new BackgroundSnake();
+            
+            if (firebaseConfig) {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                onAuthStateChanged(auth, (user) => {
+                    if (user) userId = user.uid;
+                    else if (initialAuthToken) signInWithCustomToken(auth, initialAuthToken);
+                    else signInAnonymously(auth);
+                });
+            }
+            window.nav('menu');
+        }
+
+        window.nav = (screen) => {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(`screen-${screen}`).classList.add('active');
+        };
+
+        window.copyCode = () => {
+            const codeText = document.getElementById('lobby-code').innerText.replace(/\s/g, '');
+            if (!navigator.clipboard) { fallbackCopy(codeText); return; }
+            navigator.clipboard.writeText(codeText)
+                .then(() => alert("Code Copied: " + codeText))
+                .catch(err => { console.warn(err); fallbackCopy(codeText); });
+        };
+
+        function fallbackCopy(text) {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed"; textArea.style.left = "-9999px";
+            document.body.appendChild(textArea);
+            textArea.focus(); textArea.select();
+            try { document.execCommand('copy'); alert("Code Copied: " + text); } 
+            catch (err) { alert("Manual copy required: " + text); }
+            document.body.removeChild(textArea);
+        }
+
+        // --- AI Logic ---
+        const WIN_PATTERNS = [[0,1,2], [3,4,5], [6,7,8], [0,3,6], [1,4,7], [2,5,8], [0,4,8], [2,4,6]];
+        function checkWin(board) {
+            for (let [a,b,c] of WIN_PATTERNS) {
+                if (board[a] && board[a] === board[b] && board[a] === board[c]) return board[a];
+            }
+            return board.includes(null) ? null : 'Draw';
+        }
+        function minimax(board, depth, isMax, aiMark) {
+            const result = checkWin(board);
+            const opponent = aiMark === 'X' ? 'O' : 'X';
+            if (result === aiMark) return 10 - depth;
+            if (result === opponent) return depth - 10;
+            if (result === 'Draw') return 0;
+            if (isMax) {
+                let best = -Infinity;
+                for (let i=0; i<9; i++) {
+                    if (board[i] === null) {
+                        board[i] = aiMark; best = Math.max(best, minimax(board, depth+1, false, aiMark)); board[i] = null;
+                    }
+                }
+                return best;
+            } else {
+                let best = Infinity;
+                for (let i=0; i<9; i++) {
+                    if (board[i] === null) {
+                        board[i] = opponent; best = Math.min(best, minimax(board, depth+1, true, aiMark)); board[i] = null;
+                    }
+                }
+                return best;
+            }
+        }
+        function getBestMoves(board, player) {
+            let available = []; for(let i=0; i<9; i++) if(board[i] === null) available.push(i);
+            let bestScore = -Infinity; let moves = [];
+            available.forEach(i => {
+                board[i] = player; let score = minimax(board, 0, false, player); board[i] = null;
+                if (score > bestScore) { bestScore = score; moves = [i]; }
+                else if (score === bestScore) { moves.push(i); }
+            });
+            return { moves, score: bestScore };
+        }
+
+        // --- Game Controller ---
+        window.startLocalGame = (mode) => {
+            gameState.mode = mode; gameState.isActive = true; gameState.board = Array(9).fill(null); gameState.winner = null;
+            if (mode === 'standard') {
+                gameState.playerMark = 'X'; const starter = Math.random() < 0.5 ? 'X' : 'O'; gameState.currentPlayer = starter;
+                renderBoard(); updateStatus(starter === 'X' ? "Your Turn (X)" : "AI's Turn (O)"); window.nav('game');
+                if (starter === 'O') setTimeout(aiMove, 800);
+            } else if (mode === 'learning') {
+                const pMark = document.getElementById('learn-player').value; const starter = document.getElementById('learn-starter').value;
+                gameState.playerMark = pMark; gameState.currentPlayer = starter;
+                renderBoard(); updateStatus(starter === pMark ? "Make your move" : "Coach is watching..."); window.nav('game');
+                if (starter !== pMark) setTimeout(aiMove, 800);
+            }
+        };
+
+        window.handleCellClick = (index) => {
+            if (!gameState.isActive || gameState.board[index] !== null) return;
+            // Fix: AI turn guard for standard mode
+            if (gameState.mode === 'standard' && gameState.currentPlayer !== gameState.playerMark) return;
+
+            if (gameState.mode === 'multiplayer') { if (gameState.currentPlayer !== gameState.playerMark) return; mpSendMove(index); return; }
+            
+            if (gameState.mode === 'learning') {
+                const { moves } = getBestMoves([...gameState.board], gameState.playerMark);
+                if (!moves.includes(index)) { highlightMistake(index, moves[0]); return; }
+                updateStatus("Good move!", "success");
+            }
+            commitMove(index, gameState.playerMark);
+        };
+
+        function commitMove(index, player) {
+            if (gameState.board[index] !== null) return;
+            gameState.board[index] = player;
+            const res = checkWin(gameState.board); if (res) { endGame(res); return; }
+            gameState.currentPlayer = player === 'X' ? 'O' : 'X'; renderBoard();
+            if (gameState.mode !== 'multiplayer' && gameState.currentPlayer !== gameState.playerMark) {
+                updateStatus("AI is thinking..."); setTimeout(aiMove, 800);
+            } else if (gameState.mode !== 'multiplayer') { updateStatus("Your Turn"); }
+        }
+
+        function aiMove() {
+            if (!gameState.isActive) return;
+            if(gameState.currentPlayer === gameState.playerMark) return;
+            const aiMark = gameState.currentPlayer;
+            const { moves } = getBestMoves([...gameState.board], aiMark);
+            if (moves.length > 0) { const pick = moves[Math.floor(Math.random() * moves.length)]; commitMove(pick, aiMark); }
+        }
+
+        function highlightMistake(wrongIdx, correctIdx) {
+            gameState.isActive = false; const cells = document.querySelectorAll('.cell');
+            cells[wrongIdx].classList.add('highlight-mistake'); cells[wrongIdx].innerHTML = getIconHtml(gameState.playerMark);
+            cells[correctIdx].classList.add('highlight-best');
+            updateStatus("Suboptimal! Coach Correcting...", "error");
+            setTimeout(() => { gameState.isActive = true; commitMove(correctIdx, gameState.playerMark); }, 1500);
+        }
+
+        function endGame(result) {
+            gameState.isActive = false; gameState.winner = result; renderBoard();
+            let msg = result === 'Draw' ? "It's a Draw!" : `${result} Wins!`;
+            updateStatus(msg, result === gameState.playerMark ? 'success' : 'neutral');
+        }
+
+        // --- Multiplayer ---
+        const generateGameId = () => Math.floor(100000 + Math.random() * 900000).toString();
+        window.createMpGame = async () => {
+            if (!db) return alert("Database not ready");
+            const btn = document.getElementById('btn-create'); btn.innerHTML = '<div class="loader"></div>';
+            const code = generateGameId();
+            try {
+                await setDoc(doc(db, `artifacts/${appId}/public/data/games`, code), {
+                    board: JSON.stringify(Array(9).fill(null)),
+                    playerX: userId, playerO: null, currentPlayer: 'X', winner: null, createdAt: new Date().toISOString()
+                });
+                gameState.mpId = code; gameState.playerMark = 'X'; enterLobby(code);
+            } catch(e) { console.error(e); alert("Error creating game."); }
+            btn.innerHTML = 'Create New Game';
+        };
+
+        window.joinMpGame = async () => {
+            const code = document.getElementById('join-code').value.trim();
+            if (code.length !== 6) return alert("Enter 6 digit code");
+            const ref = doc(db, `artifacts/${appId}/public/data/games`, code);
+            const snap = await getDoc(ref);
+            if (snap.exists()) {
+                await setDoc(ref, { playerO: userId }, { merge: true });
+                gameState.mpId = code; gameState.playerMark = 'O'; startMpListener(code);
+            } else alert("Game not found");
+        };
+
+        function enterLobby(code) {
+            window.nav('lobby'); document.getElementById('lobby-code').innerText = `${code.slice(0,3)} ${code.slice(3)}`;
+            document.getElementById('qr-img').src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${code}`;
+            onSnapshot(doc(db, `artifacts/${appId}/public/data/games`, code), (snap) => { if (snap.data().playerO) startMpListener(code); });
+        }
+
+        function startMpListener(code) {
+            gameState.mode = 'multiplayer'; gameState.isActive = true; window.nav('game');
+            if (mpUnsubscribe) mpUnsubscribe();
+            mpUnsubscribe = onSnapshot(doc(db, `artifacts/${appId}/public/data/games`, code), (snap) => {
+                const data = snap.data(); gameState.board = JSON.parse(data.board); gameState.currentPlayer = data.currentPlayer;
+                if (data.winner) endGame(data.winner);
+                else {
+                    const isMyTurn = gameState.currentPlayer === gameState.playerMark;
+                    updateStatus(isMyTurn ? "Your Turn" : "Opponent's Turn", isMyTurn ? 'success' : 'neutral');
+                }
+                renderBoard();
+            });
+        }
+
+        async function mpSendMove(index) {
+            const newBoard = [...gameState.board]; newBoard[index] = gameState.playerMark;
+            const next = gameState.playerMark === 'X' ? 'O' : 'X'; const win = checkWin(newBoard);
+            await setDoc(doc(db, `artifacts/${appId}/public/data/games`, gameState.mpId), {
+                board: JSON.stringify(newBoard), currentPlayer: win ? null : next, winner: win || null
+            }, { merge: true });
+        }
+
+        function updateStatus(msg, type='neutral') {
+            const el = document.getElementById('status-text'); el.innerText = msg;
+            el.className = "text-xl font-bold transition-colors duration-300 " + (type === 'success' ? "text-green-600" : type === 'error' ? "text-red-500" : "text-gray-800");
+        }
+        function getIconHtml(mark) {
+            const iconClass = mark === 'X' ? 'ph-x' : 'ph-circle'; 
+            return `<i class="ph-bold ${iconClass} mark-${mark.toLowerCase()}" style="animation: popIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)"></i>`;
+        }
+        function renderBoard() {
+            const grid = document.getElementById('grid'); grid.innerHTML = '';
+            gameState.board.forEach((mark, i) => {
+                const cell = document.createElement('div'); cell.className = 'cell';
+                if(gameState.mode !== 'multiplayer' && gameState.currentPlayer !== gameState.playerMark && !gameState.winner) cell.classList.add('locked');
+                if (mark) cell.innerHTML = getIconHtml(mark);
+                cell.onclick = () => window.handleCellClick(i);
+                grid.appendChild(cell);
+            });
+        }
+        window.quit = () => { if (mpUnsubscribe) mpUnsubscribe(); gameState.isActive = false; window.nav('menu'); };
+        window.restart = () => { if (gameState.mode === 'multiplayer') return; window.startLocalGame(gameState.mode); };
+        window.onload = initApp;
+    </script>
+</head>
+<body>
+    <!-- BACKGROUND ANIMATION -->
+    <canvas id="bg-canvas"></canvas>
+
+    <div class="app-container">
+        <!-- HEADER -->
+        <div class="flex justify-between items-center p-6 pb-2">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white">
+                    <i class="ph-bold ph-hash"></i>
+                </div>
+                <span class="font-bold text-gray-700 tracking-tight">TicTacToe Pro</span>
+            </div>
+            <button onclick="quit()" class="text-gray-400 hover:text-gray-800 transition-colors" title="Home">
+                <i class="ph-bold ph-house text-xl"></i>
+            </button>
+        </div>
+
+        <!-- SCREEN: MENU -->
+        <div id="screen-menu" class="screen justify-center">
+            <div class="text-center mb-10">
+                <h1 class="text-4xl font-black text-gray-900 mb-2">Master<br>The Grid</h1>
+                <p class="text-gray-500">Unbeatable AI & Training Tool</p>
+            </div>
+            <div class="space-y-4 w-full max-w-xs mx-auto">
+                <button onclick="window.startLocalGame('standard')" class="btn btn-primary"><i class="ph-bold ph-sword"></i> Challenge AI</button>
+                <button onclick="window.nav('setup')" class="btn btn-outline"><i class="ph-bold ph-student"></i> Learning Mode</button>
+                <button onclick="window.nav('mp-menu')" class="btn btn-outline"><i class="ph-bold ph-users"></i> Multiplayer</button>
+            </div>
+
+            <div class="mt-10 text-center">
+                <p class="text-gray-400">Created by <a href="https://github.com/AlpakaaaaaScript" target="_blank" class="text-indigo-600 hover:underline">AlpakaaaaaScript (Anmol Guragai)</a></p>
+            </div>
+
+        </div>
+
+        <!-- SCREEN: SETUP -->
+        <div id="screen-setup" class="screen justify-center">
+            <h2 class="text-2xl font-bold text-center mb-8">Training Setup</h2>
+            <div class="max-w-xs mx-auto w-full space-y-6">
+                <div>
+                    <label class="text-sm font-bold text-gray-500 uppercase mb-2 block">Play As</label>
+                    <select id="learn-player" class="w-full p-3 bg-gray-50 rounded-xl border-2 border-e2e8f0 font-bold text-gray-700">
+                        <option value="X">X (Cross)</option>
+                        <option value="O">O (Circle)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-sm font-bold text-gray-500 uppercase mb-2 block">Who Starts?</label>
+                    <select id="learn-starter" class="w-full p-3 bg-gray-50 rounded-xl border-2 border-e2e8f0 font-bold text-gray-700">
+                        <option value="X">Player X</option>
+                        <option value="O">Player O</option>
+                    </select>
+                </div>
+                <button onclick="window.startLocalGame('learning')" class="btn btn-primary mt-4">Start Session</button>
+                <button onclick="window.nav('menu')" class="btn text-gray-400">Back</button>
+            </div>
+        </div>
+
+        <!-- SCREEN: MP MENU -->
+        <div id="screen-mp-menu" class="screen justify-center">
+            <div class="text-center max-w-xs mx-auto w-full">
+                <h2 class="text-2xl font-bold mb-2">Online Play</h2>
+                <p class="text-gray-400 text-sm mb-8">Connect with 6-digit code</p>
+                <button id="btn-create" onclick="createMpGame()" class="btn btn-primary mb-8">Create New Game</button>
+                <div class="flex gap-2 mb-4">
+                    <input id="join-code" type="number" placeholder="123 456" class="w-full p-3 rounded-xl border-2 border-gray-200 text-center font-mono text-lg outline-none focus:border-indigo-500 transition-colors">
+                </div>
+                <button onclick="joinMpGame()" class="btn btn-outline">Join Game</button>
+                <button onclick="window.nav('menu')" class="btn text-gray-400 mt-4">Back</button>
+            </div>
+        </div>
+
+        <!-- SCREEN: LOBBY -->
+        <div id="screen-lobby" class="screen justify-center text-center">
+            <h2 class="text-xl font-bold text-gray-800 mb-2">Waiting for Player...</h2>
+            <p class="text-gray-500 text-sm mb-6">Scan or enter code to join</p>
+            <div class="qr-box mb-6">
+                <img id="qr-img" src="" alt="QR Code" class="w-32 h-32 mix-blend-multiply opacity-90">
+            </div>
+            <div onclick="copyCode()" class="bg-gray-900 text-white py-3 px-6 rounded-xl inline-flex items-center gap-3 cursor-pointer hover:bg-gray-800 transition-colors shadow-lg shadow-gray-200">
+                <span id="lobby-code" class="font-mono text-2xl tracking-widest font-bold">... ...</span>
+                <i class="ph-bold ph-copy"></i>
+            </div>
+            <button onclick="window.nav('menu')" class="btn text-gray-400 mt-12">Cancel</button>
+        </div>
+
+        <!-- SCREEN: GAME -->
+        <div id="screen-game" class="screen">
+            <div class="flex-1 flex flex-col justify-center">
+                <div class="text-center mb-8 h-16 flex flex-col justify-center">
+                    <h2 id="status-text" class="text-xl font-bold text-gray-800">Loading...</h2>
+                </div>
+                <div class="board-container">
+                    <div id="grid" class="board"></div>
+                </div>
+                <div class="mt-10 flex justify-center gap-3">
+                    <button onclick="quit()" class="px-4 py-3 bg-gray-100 text-gray-600 rounded-full font-bold hover:bg-gray-200 transition-colors" title="Back to Menu">
+                        <i class="ph-bold ph-house text-xl"></i>
+                    </button>
+                    <button onclick="restart()" class="px-8 py-3 bg-white border-2 border-indigo-100 text-indigo-600 rounded-full font-bold shadow-sm hover:bg-indigo-50 transition-colors flex items-center gap-2">
+                        <i class="ph-bold ph-arrow-counter-clockwise"></i> Play Again
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
