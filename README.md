@@ -83,3 +83,27 @@ Small, focused PRs are welcome. Good first contributions:
 ## License & credits
 
 Created and maintained by AlpakaaaaaScript (Anmol Guragai).
+
+## Vercel deployment and P2P multiplayer (Upstash signaling)
+
+This project now includes a serverless signaling route and client-side WebRTC DataChannel logic so you can run multiplayer without a dedicated server. The signaling endpoint requires an ephemeral key-value store; the project uses Upstash Redis REST by default.
+
+What to set on Vercel:
+- `UPSTASH_REDIS_REST_URL` — your Upstash REST URL (e.g. `https://us1-....upstash.io`)
+- `UPSTASH_REDIS_REST_TOKEN` — your Upstash REST token (Bearer token)
+
+How it works:
+- Host: click "Create Game" (when Firestore isn't configured the app falls back to P2P). A 6-digit room code is generated and displayed in the lobby.
+- Guest: enter the 6-digit code in the join box and click Join. The client will fetch the stored offer and reply with an answer.
+- The app exchanges ICE candidates via the serverless endpoint. Once the DataChannel is open, moves are sent as JSON messages and applied immediately on both peers.
+
+Notes & troubleshooting:
+- Preferred: set up Vercel KV and add the `@vercel/kv` package to your project so the serverless handler uses Vercel KV directly. This keeps everything on Vercel and is the recommended setup for production.
+- Fallback: if `@vercel/kv` isn't available or KV isn't configured, the handler will fall back to Upstash REST. In that case you must set the Upstash env vars in your Vercel project for signaling to work.
+- The signaling messages are short-lived (keys expire). If connection fails, recreate the room (host) and rejoin (guest).
+- To test locally without Vercel: you can run the Vercel dev environment (`vercel dev`) and set environment variables locally, or deploy a quick preview to Vercel and test using two different browsers/devices.
+
+Security:
+- The current signaling flow stores ephemeral SDP and ICE data in Upstash with short TTLs; do not store long-term secrets in the same keys. This setup is intended for ad-hoc peer-to-peer games.
+
+If you want, I can also add a short deploy checklist and a GitHub Actions workflow that runs a preview deploy to Vercel automatically.

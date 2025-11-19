@@ -1,0 +1,17 @@
+{
+  "name": "tictactoe-ai",
+  "version": "1.0.0",
+  "description": "Production-ready tic-tac-toe web app with minimax AI and P2P WebRTC multiplayer",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@vercel/kv": "^0.2.1"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  }
+}

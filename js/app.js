@@ -376,40 +376,171 @@ function endGame(result) {
     updateStatus(msg, result === gameState.playerMark ? 'success' : 'neutral');
 }
 
-// --- Multiplayer ---
+// --- Multiplayer (Firestore OR P2P fallback using serverless signaling) ---
 const generateGameId = () => Math.floor(100000 + Math.random() * 900000).toString();
+
+// P2P state
+let pc = null;
+let dc = null;
+let isHost = false;
+let p2pRoomId = null;
+let p2pPolls = { answer: null, candidates: null };
+let seenRemoteCandidates = new Set();
+
+async function httpPostRoom(id, type, value) {
+    return fetch(`/api/room/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, value }) }).then(r => r.json());
+}
+async function httpGetRoom(id, type) {
+    const res = await fetch(`/api/room/${id}?type=${encodeURIComponent(type)}`);
+    const json = await res.json();
+    return json && json.result ? json.result : null;
+}
+
+function makePeerConnection() {
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    pc.onicecandidate = (e) => {
+        if (e.candidate && p2pRoomId) {
+            // push candidate to Upstash
+            const cand = e.candidate.toJSON();
+            httpPostRoom(p2pRoomId, 'candidate', cand).catch(console.warn);
+        }
+    };
+    pc.onconnectionstatechange = () => {
+        console.debug('PC state', pc.connectionState);
+    };
+    return pc;
+}
+
+function setupDataChannelHandlers() {
+    if (!dc) return;
+    dc.onopen = () => {
+        console.log('DataChannel open');
+        updateStatus("Connected — your move if it's your turn", 'success');
+    };
+    dc.onmessage = (ev) => {
+        try {
+            const msg = JSON.parse(ev.data);
+            if (msg && msg.type === 'move') {
+                const remoteMark = gameState.playerMark === 'X' ? 'O' : 'X';
+                // Apply remote move (do not re-send)
+                commitMove(msg.index, remoteMark);
+            }
+        } catch (e) { console.warn('Invalid message', e); }
+    };
+}
+
+function startCandidatePolling() {
+    if (p2pPolls.candidates) return;
+    p2pPolls.candidates = setInterval(async () => {
+        try {
+            const arr = await httpGetRoom(p2pRoomId, 'candidate') || [];
+            for (const c of arr) {
+                const key = JSON.stringify(c);
+                if (!seenRemoteCandidates.has(key)) {
+                    seenRemoteCandidates.add(key);
+                    try { await pc.addIceCandidate(c); } catch (e) { console.warn('addIceCandidate failed', e); }
+                }
+            }
+        } catch (e) { console.warn(e); }
+    }, 1500);
+}
+
+async function p2pCreateRoom() {
+    isHost = true; p2pRoomId = generateGameId();
+    pc = makePeerConnection();
+    dc = pc.createDataChannel('ttt');
+    setupDataChannelHandlers();
+
+    // Create offer
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    // Post offer
+    await httpPostRoom(p2pRoomId, 'offer', offer);
+
+    // Poll for answer
+    p2pPolls.answer = setInterval(async () => {
+        const answer = await httpGetRoom(p2pRoomId, 'answer');
+        if (answer) {
+            clearInterval(p2pPolls.answer); p2pPolls.answer = null;
+            await pc.setRemoteDescription(answer);
+            startCandidatePolling();
+            // Start game as host
+            gameState.mpId = p2pRoomId; gameState.playerMark = 'X'; gameState.mode = 'multiplayer'; gameState.isActive = true;
+            window.nav('game'); renderBoard(); updateStatus("Connected — waiting for moves", 'success');
+        }
+    }, 1500);
+}
+
+async function p2pJoinRoom(code) {
+    p2pRoomId = code; isHost = false; pc = makePeerConnection();
+    pc.ondatachannel = (ev) => { dc = ev.channel; setupDataChannelHandlers(); };
+
+    // Fetch offer
+    const offer = await httpGetRoom(p2pRoomId, 'offer');
+    if (!offer) return alert('Offer not found — make sure code is correct and host has created the room.');
+    await pc.setRemoteDescription(offer);
+
+    // Create answer
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await httpPostRoom(p2pRoomId, 'answer', answer);
+
+    // Start candidate polling
+    startCandidatePolling();
+
+    // Start game as client
+    gameState.mpId = p2pRoomId; gameState.playerMark = 'O'; gameState.mode = 'multiplayer'; gameState.isActive = true;
+    window.nav('game'); renderBoard(); updateStatus("Connected — waiting for host move", 'neutral');
+}
+
+// Public create/join that fallback to P2P when Firestore/db not available
 window.createMpGame = async () => {
-    if (!db) return alert("Database not ready");
-    const btn = document.getElementById('btn-create'); btn.innerHTML = '<div class="loader"></div>';
-    const code = generateGameId();
-    try {
-        await setDoc(doc(db, `artifacts/${appId}/public/data/games`, code), {
-            board: JSON.stringify(Array(9).fill(null)),
-            playerX: userId, playerO: null, currentPlayer: 'X', winner: null, createdAt: new Date().toISOString()
-        });
-        gameState.mpId = code; gameState.playerMark = 'X'; enterLobby(code);
-    } catch(e) { console.error(e); alert("Error creating game."); }
-    btn.innerHTML = 'Create New Game';
+    if (db) {
+        const btn = document.getElementById('btn-create'); btn.innerHTML = '<div class="loader"></div>';
+        const code = generateGameId();
+        try {
+            await setDoc(doc(db, `artifacts/${appId}/public/data/games`, code), {
+                board: JSON.stringify(Array(9).fill(null)),
+                playerX: userId, playerO: null, currentPlayer: 'X', winner: null, createdAt: new Date().toISOString()
+            });
+            gameState.mpId = code; gameState.playerMark = 'X'; enterLobby(code);
+        } catch (e) { console.error(e); alert('Error creating game.'); }
+        btn.innerHTML = 'Create New Game';
+    } else {
+        // P2P fallback
+        await p2pCreateRoom();
+        // show lobby with code
+        window.nav('lobby'); document.getElementById('lobby-code').innerText = `${p2pRoomId.slice(0,3)} ${p2pRoomId.slice(3)}`;
+        document.getElementById('qr-img').src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${p2pRoomId}`;
+    }
 };
 
 window.joinMpGame = async () => {
     const code = document.getElementById('join-code').value.trim();
-    if (code.length !== 6) return alert("Enter 6 digit code");
-    const ref = doc(db, `artifacts/${appId}/public/data/games`, code);
-    const snap = await getDoc(ref);
-    if (snap.exists()) {
-        await setDoc(ref, { playerO: userId }, { merge: true });
-        gameState.mpId = code; gameState.playerMark = 'O'; startMpListener(code);
-    } else alert("Game not found");
+    if (code.length !== 6) return alert('Enter 6 digit code');
+    if (db) {
+        const ref = doc(db, `artifacts/${appId}/public/data/games`, code);
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+            await setDoc(ref, { playerO: userId }, { merge: true });
+            gameState.mpId = code; gameState.playerMark = 'O'; startMpListener(code);
+        } else alert('Game not found');
+    } else {
+        // P2P fallback
+        await p2pJoinRoom(code);
+    }
 };
 
+// When using Firestore, existing enterLobby/startMpListener remain unchanged
 function enterLobby(code) {
     window.nav('lobby'); document.getElementById('lobby-code').innerText = `${code.slice(0,3)} ${code.slice(3)}`;
     document.getElementById('qr-img').src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${code}`;
-    onSnapshot(doc(db, `artifacts/${appId}/public/data/games`, code), (snap) => { if (snap.data().playerO) startMpListener(code); });
+    if (db) onSnapshot(doc(db, `artifacts/${appId}/public/data/games`, code), (snap) => { if (snap.data().playerO) startMpListener(code); });
 }
 
 function startMpListener(code) {
+    if (!db) return; // P2P path doesn't use Firestore listener
     gameState.mode = 'multiplayer'; gameState.isActive = true; window.nav('game');
     if (mpUnsubscribe) mpUnsubscribe();
     mpUnsubscribe = onSnapshot(doc(db, `artifacts/${appId}/public/data/games`, code), (snap) => {
@@ -417,18 +548,30 @@ function startMpListener(code) {
         if (data.winner) endGame(data.winner);
         else {
             const isMyTurn = gameState.currentPlayer === gameState.playerMark;
-            updateStatus(isMyTurn ? "Your Turn" : "Opponent's Turn", isMyTurn ? 'success' : 'neutral');
+            updateStatus(isMyTurn ? 'Your Turn' : "Opponent's Turn", isMyTurn ? 'success' : 'neutral');
         }
         renderBoard();
     });
 }
 
 async function mpSendMove(index) {
-    const newBoard = [...gameState.board]; newBoard[index] = gameState.playerMark;
-    const next = gameState.playerMark === 'X' ? 'O' : 'X'; const win = checkWin(newBoard);
-    await setDoc(doc(db, `artifacts/${appId}/public/data/games`, gameState.mpId), {
-        board: JSON.stringify(newBoard), currentPlayer: win ? null : next, winner: win || null
-    }, { merge: true });
+    // If P2P active, send via DataChannel
+    if (gameState.mode === 'multiplayer' && dc && dc.readyState === 'open') {
+        const msg = JSON.stringify({ type: 'move', index });
+        try { dc.send(msg); } catch (e) { console.warn('DataChannel send failed', e); }
+        // Also locally commit
+        commitMove(index, gameState.playerMark);
+        return;
+    }
+
+    // Firestore fallback
+    if (db) {
+        const newBoard = [...gameState.board]; newBoard[index] = gameState.playerMark;
+        const next = gameState.playerMark === 'X' ? 'O' : 'X'; const win = checkWin(newBoard);
+        await setDoc(doc(db, `artifacts/${appId}/public/data/games`, gameState.mpId), {
+            board: JSON.stringify(newBoard), currentPlayer: win ? null : next, winner: win || null
+        }, { merge: true });
+    }
 }
 
 function updateStatus(msg, type='neutral') {
