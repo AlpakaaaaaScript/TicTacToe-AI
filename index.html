@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Master Tic-Tac-Toe</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="css/style.css">
+    
+    <!-- Firebase / app JS moved to js/app.js -->
+</head>
+<body>
+    <!-- BACKGROUND ANIMATION -->
+    <canvas id="bg-canvas"></canvas>
+
+    <div class="app-container">
+        <!-- HEADER -->
+        <div class="flex justify-between items-center p-6 pb-2">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white">
+                    <i class="ph-bold ph-hash"></i>
+                </div>
+                <span class="font-bold text-gray-700 tracking-tight">TicTacToe Pro</span>
+            </div>
+            <button onclick="quit()" class="text-gray-400 hover:text-gray-800 transition-colors" title="Home">
+                <i class="ph-bold ph-house text-xl"></i>
+            </button>
+        </div>
+
+        <!-- SCREEN: MENU -->
+        <div id="screen-menu" class="screen justify-center">
+            <div class="text-center mb-10">
+                <h1 class="text-4xl font-black text-gray-900 mb-2">Master<br>The Grid</h1>
+                <p class="text-gray-500">Unbeatable AI & Training Tool</p>
+            </div>
+            <div class="space-y-4 w-full max-w-xs mx-auto">
+                <button onclick="window.startLocalGame('standard')" class="btn btn-primary"><i class="ph-bold ph-sword"></i> Challenge AI</button>
+                <button onclick="window.nav('setup')" class="btn btn-outline"><i class="ph-bold ph-student"></i> Learning Mode</button>
+                <button onclick="window.nav('mp-menu')" class="btn btn-outline"><i class="ph-bold ph-users"></i> Multiplayer</button>
+            </div>
+
+            <div class="mt-10 text-center">
+                <p class="text-gray-400">Created by <a href="https://github.com/AlpakaaaaaScript" target="_blank" class="text-indigo-600 hover:underline">AlpakaaaaaScript (Anmol Guragai)</a></p>
+            </div>
+
+        </div>
+
+        <!-- SCREEN: SETUP -->
+        <div id="screen-setup" class="screen justify-center">
+            <h2 class="text-2xl font-bold text-center mb-8">Training Setup</h2>
+            <div class="max-w-xs mx-auto w-full space-y-6">
+                <div>
+                    <label class="text-sm font-bold text-gray-500 uppercase mb-2 block">Play As</label>
+                    <select id="learn-player" class="w-full p-3 bg-gray-50 rounded-xl border-2 border-e2e8f0 font-bold text-gray-700">
+                        <option value="X">X (Cross)</option>
+                        <option value="O">O (Circle)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-sm font-bold text-gray-500 uppercase mb-2 block">Who Starts?</label>
+                    <select id="learn-starter" class="w-full p-3 bg-gray-50 rounded-xl border-2 border-e2e8f0 font-bold text-gray-700">
+                        <option value="X">Player X</option>
+                        <option value="O">Player O</option>
+                    </select>
+                </div>
+                <button onclick="window.startLocalGame('learning')" class="btn btn-primary mt-4">Start Session</button>
+                <button onclick="window.nav('menu')" class="btn text-gray-400">Back</button>
+            </div>
+        </div>
+
+        <!-- SCREEN: MP MENU -->
+        <div id="screen-mp-menu" class="screen justify-center">
+            <div class="text-center max-w-xs mx-auto w-full">
+                <h2 class="text-2xl font-bold mb-2">Online Play</h2>
+                <p class="text-gray-400 text-sm mb-8">Connect with 6-digit code</p>
+                <button id="btn-create" onclick="createMpGame()" class="btn btn-primary mb-8">Create New Game</button>
+                <div class="flex gap-2 mb-4">
+                    <input id="join-code" type="number" placeholder="123 456" class="w-full p-3 rounded-xl border-2 border-gray-200 text-center font-mono text-lg outline-none focus:border-indigo-500 transition-colors">
+                </div>
+                <button onclick="joinMpGame()" class="btn btn-outline">Join Game</button>
+                <button onclick="window.nav('menu')" class="btn text-gray-400 mt-4">Back</button>
+            </div>
+        </div>
+
+        <!-- SCREEN: LOBBY -->
+        <div id="screen-lobby" class="screen justify-center text-center">
+            <h2 class="text-xl font-bold text-gray-800 mb-2">Waiting for Player...</h2>
+            <p class="text-gray-500 text-sm mb-6">Scan or enter code to join</p>
+            <div class="qr-box mb-6">
+                <img id="qr-img" src="" alt="QR Code" class="w-32 h-32 mix-blend-multiply opacity-90">
+            </div>
+            <div onclick="copyCode()" class="bg-gray-900 text-white py-3 px-6 rounded-xl inline-flex items-center gap-3 cursor-pointer hover:bg-gray-800 transition-colors shadow-lg shadow-gray-200">
+                <span id="lobby-code" class="font-mono text-2xl tracking-widest font-bold">... ...</span>
+                <i class="ph-bold ph-copy"></i>
+            </div>
+            <button onclick="window.nav('menu')" class="btn text-gray-400 mt-12">Cancel</button>
+        </div>
+
+        <!-- SCREEN: GAME -->
+        <div id="screen-game" class="screen">
+            <div class="flex-1 flex flex-col justify-center">
+                <div class="text-center mb-8 h-16 flex flex-col justify-center">
+                    <h2 id="status-text" class="text-xl font-bold text-gray-800">Loading...</h2>
+                </div>
+                <div class="board-container">
+                    <div id="grid" class="board"></div>
+                </div>
+                <div class="mt-10 flex justify-center gap-3">
+                    <button onclick="quit()" class="px-4 py-3 bg-gray-100 text-gray-600 rounded-full font-bold hover:bg-gray-200 transition-colors" title="Back to Menu">
+                        <i class="ph-bold ph-house text-xl"></i>
+                    </button>
+                    <button onclick="restart()" class="px-8 py-3 bg-white border-2 border-indigo-100 text-indigo-600 rounded-full font-bold shadow-sm hover:bg-indigo-50 transition-colors flex items-center gap-2">
+                        <i class="ph-bold ph-arrow-counter-clockwise"></i> Play Again
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>
